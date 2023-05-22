@@ -24,9 +24,10 @@ public class GoBackN extends Base_Protocol implements Callbacks {
 
         frame_expected = 0;
         next_frame_to_send = 0;
-        sending_buffer = new String[sim.get_max_sequence() + 1];
+        sending_buffer = new String[sim.get_max_sequence() + 1]; 
         ack_expected = 0;
-        counter = 0;
+        counter_buffer = 0; //var de controlo para o sending_buffer
+        nak_sent = false; //variavel de controlo que diz se o nak foi enviado
 
     }
 
@@ -91,6 +92,7 @@ public class GoBackN extends Base_Protocol implements Callbacks {
             send_next_data_packet(); // se estiver entre o ack e a window envia o proximo pacote
         }
     }
+    
 
     /**
      * CALLBACK FUNCTION: handle the timer event; retransmit failed frames.
@@ -99,9 +101,9 @@ public class GoBackN extends Base_Protocol implements Callbacks {
      * @param key timer key (sequence number)
      */
     @Override
-    public void handle_Data_Timer(long time, int key) { //Donne
+    public void handle_Data_Timer(long time, int key) { //Donne fakta perceber o counter
         
-        for(int n = ack_expected; n < counter; n = next_seq(n)){ // se acontecer um timeout do data_timer temos que cancelar todos os timers
+        for(int n = ack_expected; n < counter_buffer; n = next_seq(n)){ // se acontecer um timeout do data_timer temos que cancelar todos os timers
             sim.cancel_data_timer(n);
         }
         next_frame_to_send = key; //key foi o frame que levou timeout portanto queremos que o proximo a enviar seja "key"
@@ -127,7 +129,43 @@ public class GoBackN extends Base_Protocol implements Callbacks {
      * @param frame frame received
      */
     @Override
-    public void from_physical_layer(long time, Frame frame) {
+    public void from_physical_layer(long time, Frame frame) { //donne
+       
+                //TRATAMENTO DE FRAMES DE NAK //donne
+        if (frame.kind() == Frame.NAK_FRAME){   // Check if its a NAK frame
+            
+            if (between(ack_expected, prev_seq(frame.ack()), prev_seq(counter_buffer)))//verifica se o elem antes do NAK está entre o ack_expected e o ultimo elemnto do buffer
+            {                                                                                                           
+                for(; ack_expected != frame.ack(); ack_expected = next_seq(ack_expected)){//para o loop quando ack_expected = nak recebido (para dar a volta á sequencia por exemplo)
+                   
+                    sim.cancel_data_timer(ack_expected);//cancela o data timer da data recebida
+                    sending_buffer[ack_expected] = null;//descarta os frames depois do nak
+                    
+                }
+                    
+            }
+            for (int n = ack_expected; n <= counter_buffer; n = next_seq(n))//cancels the data timers of the datas from the nak_sent to the last sent
+            {
+                sim.cancel_data_timer(n);
+            }
+            next_frame_to_send = frame.ack();//o próximo frame a enviar é o recebido com o numero de seq do nak
+            
+            /**     DIFF_SEQ
+            * Calculates the difference between two sequence numbers taking into 
+            * account the wrapping when the maximum sequence number is reached
+            * @param a first sequence number
+            * @param b first sequence number
+            * @return number of numbers between a and b
+            */
+            if (diff_seq(ack_expected, next_frame_to_send) < sim.get_send_window())//se a diferença entre o ack_expected e o proximo frame a enviar for menor que a janela de envio, enviamos um pacote
+            {
+                send_next_data_packet();
+            }
+            
+        }
+        
+        
+                    //TRATAMENTO DE FRAMES DE DADOS //donne
         if (frame.kind() == Frame.DATA_FRAME) {     // Check if its a data frane
             //ativação de ack timer para piggybaking
             if (!sim.isactive_ack_timer()) {
@@ -138,13 +176,40 @@ public class GoBackN extends Base_Protocol implements Callbacks {
 
             Frame ack_frame = Frame.new_Ack_Frame(dframe.seq(), dframe.rcvbufsize()); //criar ACK frame
             receaving_buffer = ack_frame; // To store the ack frame
+            
+            //receaving a normal data frame
+            if (frame.seq() == frame_expected) //verifica se o data frame é o esperado
+            {    
+                frame_expected = next_seq(frame_expected);
+                net.to_network_layer(frame.info());
+                nak_sent = false;
+            } else//caso contrario envia um nak
+                 if (nak_sent == false) {
+                    nak_sent = true;
+                    sim.cancel_ack_timer();
+                    sim.to_physical_layer(Frame.new_Nak_Frame(frame_expected, net.get_recvbuffsize()), false /* do not interrupt an ongoing transmission*/); //envia um ack sem data se o timer expirar
+                }
+            
+            
+            //receaving a piggybacked data frame
+            if (dframe.ack() == ack_expected) { //verifica se o frame tem o ack esperado
 
-            if (dframe.ack() == next_frame_to_send) {
+                sim.cancel_data_timer(ack_expected);
+                //next_frame_to_send = next_seq(next_frame_to_send); // avança na seq
+                sending_buffer[ack_expected] = null; //removemos o elemento do buffer pois foi confirmado via piggyback
 
-                sim.cancel_data_timer(next_frame_to_send);
-                next_frame_to_send = next_seq(next_frame_to_send); // avança na seq
-
+                ack_expected = next_seq(ack_expected); //avança no proximo ack esperado
                 send_next_data_packet();
+            }else//if it is not the one expected
+            {
+                if (between(ack_expected, frame.ack(), add_seq(ack_expected, sim.get_send_window())))//verifica se o ack recebido na trama de dados está entre o ack_expected a janela 
+                {
+                    for (; ack_expected != frame.ack(); ack_expected = next_seq(ack_expected))//até ack_expected = ack recebido pode dar a volta á seq por exemplo
+                    {//podemos confirmar que recebemos tudo até este ponto mesmo que falhe algum ack 
+                        sending_buffer[ack_expected] = null;//erases the frames from buffer
+                        sim.cancel_data_timer(ack_expected);
+                    }
+                }
             }
 
             if (dframe.seq() == frame_expected) {    // Check the sequence number
@@ -154,17 +219,31 @@ public class GoBackN extends Base_Protocol implements Callbacks {
                 }
             }
         }
+        
+                    //TRATAMENTO DE FRAMES DE ACK //donne
         if (frame.kind() == Frame.ACK_FRAME) { //check if its a ack frame
 
             AckFrameIF aframe = frame;  // Auxiliary variable to access the Ack frame fields.
-
-            if (aframe.ack() == next_frame_to_send) { //envio de data(somente) após ack
+            
+            //se o ack for o esperado 
+            if (aframe.ack() == ack_expected) { 
 
                 sim.cancel_data_timer(next_frame_to_send);
-                next_frame_to_send = next_seq(next_frame_to_send); // avança na seq
+                sending_buffer[ack_expected] = null; //retiramos o frame do buffer pois foi recebido
+                ack_expected = next_seq(ack_expected);
 
-                send_next_data_packet();
+                send_next_data_packet(); //só se envia um pacote se o ack for igual ao esperado
             }
+            //se o ack não for o esperado e estiver dentro da sliding window (pode acontecer se algum ack for perdido)
+            if (between(ack_expected, frame.ack(), add_seq(ack_expected, sim.get_send_window())))//verifica se o ack recebido está entre o esperado e a janela
+            {
+                for (; ack_expected != frame.ack(); ack_expected = next_seq(ack_expected))//para o loop quando ack_expected = ack recebido (para dar a volta á sequencia por exemplo)
+                {
+                    sim.cancel_data_timer(ack_expected);
+                    sending_buffer[ack_expected] = null;
+                }
+            }
+            
         }
     }
 
@@ -212,6 +291,10 @@ public class GoBackN extends Base_Protocol implements Callbacks {
     /**
      * Counter for the buffer
      */
-    private int counter;
-
+    private int counter_buffer;
+    /**
+     * State of nak - if has been sent (true) false otherwise
+     */
+    private boolean nak_sent;
+ 
 }
