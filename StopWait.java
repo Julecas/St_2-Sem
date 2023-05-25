@@ -51,23 +51,27 @@ public class StopWait extends Base_Protocol implements Callbacks {
         //   you must wait for the DATA_END event before transmitting another one
         //   otherwise the first packet is lost in the channel
         //sending_buffer = net.from_network_layer(); // Guardar pacote num buffer
-        if (sending_buffer != null) {
+        
 
-           
+        if (sending_buffer != null && (!sim.is_sending_data())) {
+
+            sim.cancel_ack_timer();
+
             
             // The ACK field of the DATA frame is always the sequence number before zero, because no packets will be received
             int ack = prev_seq(frame_expected);  //ack do anterior ao proximo frame esperado = ack atual
-            sim.cancel_ack_timer();
             Frame frame = Frame.new_Data_Frame(next_frame_to_send /*seq*/,
                     ack /* ack= the one before 0 */,
                     net.get_recvbuffsize() /* returns the buffer space available in the network layer */,
                     sending_buffer);
             
-            sim.cancel_ack_timer();
-            sim.to_physical_layer(frame, false /* do not interrupt an ongoing transmission*/);
-            next_frame_to_send = next_seq(next_frame_to_send);
 
+            sim.to_physical_layer(frame, false /* do not interrupt an ongoing transmission*/);
+            
+  
             // Transmission of next DATA frame occurs after DATA_END event is received
+        }else{
+            return;
         }
     }
 
@@ -79,7 +83,7 @@ public class StopWait extends Base_Protocol implements Callbacks {
      */
     @Override
     public void handle_Data_end(long time, int seq) {
-        sim.start_data_timer(seq);
+        sim.start_data_timer(seq);   
     }
 
     /**
@@ -117,9 +121,6 @@ public class StopWait extends Base_Protocol implements Callbacks {
         //TRATAMENTO DE DATA 
         if (frame.kind() == Frame.DATA_FRAME) {     // Check if its a data frane
             //ativação de ack timer para piggybaking
-            //if (!sim.isactive_ack_timer()) {
-                sim.start_ack_timer();
-            //}
 
             DataFrameIF dframe = frame;  // Auxiliary variable to access the Data frame fields.
 
@@ -134,14 +135,16 @@ public class StopWait extends Base_Protocol implements Callbacks {
 
                 send_next_data_packet();
             }
-
+           
             if (dframe.seq() == frame_expected) {    // Check the sequence number
                 // Send the frame to the network layer
+                
                 if (net.to_network_layer(dframe.info())) { //se for bem recebido
                     frame_expected = next_seq(frame_expected); //avança na seq
+                    sim.start_ack_timer();
                 }
             }
-
+            
             //TREATAMENTO DE ACK 
             if (frame.kind() == Frame.ACK_FRAME) { //check if its a ack frame
 
@@ -151,8 +154,8 @@ public class StopWait extends Base_Protocol implements Callbacks {
 
                     sim.cancel_data_timer(next_frame_to_send);
                     next_frame_to_send = next_seq(next_frame_to_send); // avança na seq
-
-                    send_next_data_packet();
+                    
+                    send_next_data_packet();                    
                 }
             }
         }
