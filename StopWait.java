@@ -52,10 +52,9 @@ public class StopWait extends Base_Protocol implements Callbacks {
         //   otherwise the first packet is lost in the channel
         //sending_buffer = net.from_network_layer(); // Guardar pacote num buffer
         if (sending_buffer != null) {
+
+           
             
-            if(sim.isactive_ack_timer()){ //verificar se estou a fazer piggybacking
-                 sim.Log("SENDING WITH PIGGYBACKING\n");
-            }
             // The ACK field of the DATA frame is always the sequence number before zero, because no packets will be received
             int ack = prev_seq(frame_expected);  //ack do anterior ao proximo frame esperado = ack atual
             sim.cancel_ack_timer();
@@ -63,10 +62,12 @@ public class StopWait extends Base_Protocol implements Callbacks {
                     ack /* ack= the one before 0 */,
                     net.get_recvbuffsize() /* returns the buffer space available in the network layer */,
                     sending_buffer);
-            sim.to_physical_layer(frame, false /* do not interrupt an ongoing transmission*/);
             
-            // Transmission of next DATA frame occurs after DATA_END event is received
+            sim.cancel_ack_timer();
+            sim.to_physical_layer(frame, false /* do not interrupt an ongoing transmission*/);
+            next_frame_to_send = next_seq(next_frame_to_send);
 
+            // Transmission of next DATA frame occurs after DATA_END event is received
         }
     }
 
@@ -98,7 +99,7 @@ public class StopWait extends Base_Protocol implements Callbacks {
      * @param time current simulation time
      */
     @Override
-    public void handle_ack_Timer(long time) { 
+    public void handle_ack_Timer(long time) {
         sim.to_physical_layer(receaving_buffer, false /* do not interrupt an ongoing transmission*/); //envia um ack sem data se o timer expirar
 
     }
@@ -113,42 +114,46 @@ public class StopWait extends Base_Protocol implements Callbacks {
     @Override
     public void from_physical_layer(long time, Frame frame) {
 
+        //TRATAMENTO DE DATA 
         if (frame.kind() == Frame.DATA_FRAME) {     // Check if its a data frane
             //ativação de ack timer para piggybaking
-            if (!sim.isactive_ack_timer()) {
+            //if (!sim.isactive_ack_timer()) {
                 sim.start_ack_timer();
-            }
+            //}
 
             DataFrameIF dframe = frame;  // Auxiliary variable to access the Data frame fields.
 
             Frame ack_frame = Frame.new_Ack_Frame(dframe.seq(), dframe.rcvbufsize()); //criar ACK frame
             receaving_buffer = ack_frame; // To store the ack frame
-
-            if (dframe.ack() == next_frame_to_send) { 
+            
+            //mesmo tratamento de ack
+            if (dframe.ack() == next_frame_to_send) {
 
                 sim.cancel_data_timer(next_frame_to_send);
                 next_frame_to_send = next_seq(next_frame_to_send); // avança na seq
-                
+
                 send_next_data_packet();
             }
 
             if (dframe.seq() == frame_expected) {    // Check the sequence number
                 // Send the frame to the network layer
-                if (net.to_network_layer(dframe.info())) {
+                if (net.to_network_layer(dframe.info())) { //se for bem recebido
                     frame_expected = next_seq(frame_expected); //avança na seq
                 }
             }
-        }
-        if (frame.kind() == Frame.ACK_FRAME) { //check if its a ack frame
 
-            AckFrameIF aframe = frame;  // Auxiliary variable to access the Ack frame fields.
+            //TREATAMENTO DE ACK 
+            if (frame.kind() == Frame.ACK_FRAME) { //check if its a ack frame
 
-            if (aframe.ack() == next_frame_to_send) { //envio de data(somente) após ack
+                AckFrameIF aframe = frame;  // Auxiliary variable to access the Ack frame fields.
 
-                sim.cancel_data_timer(next_frame_to_send);
-                next_frame_to_send = next_seq(next_frame_to_send); // avança na seq
+                if (aframe.ack() == next_frame_to_send) { //envio de data(somente) após ack
 
-                send_next_data_packet();
+                    sim.cancel_data_timer(next_frame_to_send);
+                    next_frame_to_send = next_seq(next_frame_to_send); // avança na seq
+
+                    send_next_data_packet();
+                }
             }
         }
     }
