@@ -36,19 +36,23 @@ public class StopWait extends Base_Protocol implements Callbacks {
         send_next_data_packet();
         next_frame_to_send = next_seq(next_frame_to_send); // avança na seq
     }
-
+    /**
+     * CALLBACK FUNCTION: fetches a packet from the network layer and sends it
+     *
+     * 
+     */
     public void send_next_data_packet() {
 
         sending_buffer = net.from_network_layer(); // buscar o proximo pacote do nivel de rede e Guardar pacote num buffer
         send_data_packet();
     }
-
+    /**
+     * CALLBACK FUNCTION: Resends a data packet which was lost due to an error
+     *
+     * 
+     */
     private void resend_data_packet() {
-        // We can only send one Data packet at a time
-        //   you must wait for the DATA_END event before transmitting another one
-        //   otherwise the first packet is lost in the channel
-        //sending_buffer = net.from_network_layer(); // Guardar pacote num buffer
-
+      
         if (sending_buffer != null && (!sim.is_sending_data())) {
 
             sim.cancel_ack_timer();
@@ -62,23 +66,19 @@ public class StopWait extends Base_Protocol implements Callbacks {
 
             sim.to_physical_layer(frame, false /* do not interrupt an ongoing transmission*/);
 
-            // Transmission of next DATA frame occurs after DATA_END event is received
         } else {
             sim.Log("Could not send a frame - resend\n");
             return;
         }
     }
-
-    /* 
-    * Fetches the network layer for the next packet and starts it transmission
-     * @return true is started data frame transmission, false otherwise
+    /**
+     * CALLBACK FUNCTION: sends a data packet for the first time
+     *
+     * 
      */
+   
     private void send_data_packet() {
-        // We can only send one Data packet at a time
-        //   you must wait for the DATA_END event before transmitting another one
-        //   otherwise the first packet is lost in the channel
-        //sending_buffer = net.from_network_layer(); // Guardar pacote num buffer
-
+      
         if (sending_buffer != null && (!sim.is_sending_data())) {
 
             sim.cancel_ack_timer();
@@ -151,7 +151,7 @@ public class StopWait extends Base_Protocol implements Callbacks {
         if (frame.kind() == Frame.DATA_FRAME) {     // Check if its a data frane
             //ativação de ack timer para piggybaking
 
-            
+            //ack que tenha sido piggybacked (mesmo tratamento que ack normal)
             if (frame.ack() == prev_seq(next_frame_to_send)) {
 
                 sim.cancel_data_timer(prev_seq(next_frame_to_send));
@@ -172,7 +172,6 @@ public class StopWait extends Base_Protocol implements Callbacks {
         //TREATAMENTO DE ACK 
         if (frame.kind() == Frame.ACK_FRAME) { //check if its a ack frame
 
-            //        AckFrameIF aframe = frame;  // Auxiliary variable to access the Ack frame fields.
             if (frame.ack() == prev_seq(next_frame_to_send)) { //envio de data(somente) após ack  if (aframe.ack() == prev_seq(next_frame_to_send)) { //envio de data(somente) após ack
 
                 sim.cancel_data_timer(prev_seq(next_frame_to_send));
@@ -206,7 +205,6 @@ public class StopWait extends Base_Protocol implements Callbacks {
      * Sequence number of the next data frame
      */
     private int next_frame_to_send;
-
     /**
      * Sending buffer
      */
